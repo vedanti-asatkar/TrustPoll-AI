@@ -36,7 +36,7 @@ def generate_decision_payload(metadata, rules_triggered):
         "email": metadata["email"],
         "action": "vote",
         "has_voted": metadata["has_voted"],
-        "wallet": metadata["wallet"],
+        "voter_ref": metadata["voter_ref"],
         "decision": decision,
         "risk_score": round(risk_score, 2),
         "rules_triggered": rules_triggered,
@@ -68,7 +68,7 @@ def analyze_vote(metadata):
             """,
             (
                 payload["email"],
-                payload["wallet"],
+                payload["voter_ref"],
                 payload["has_voted"],
                 payload["decision"],
                 payload["risk_score"],

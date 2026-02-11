@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
-const WALLET_REGEX = /^WALLET_[A-Z0-9]{4,8}$/;
+const WALLET_REGEX = /^[A-Z2-7]{58}$/;
 
 export default function LoginPage() {
   const router = useRouter();
@@ -23,7 +23,7 @@ export default function LoginPage() {
       return;
     }
     if (!WALLET_REGEX.test(cleanWallet)) {
-      setError("❌ Wallet must follow format: WALLET_XXXX");
+      setError("Enter a valid Algorand wallet address (58 chars, A-Z and 2-7).");
       return;
     }
 
@@ -81,7 +81,7 @@ export default function LoginPage() {
               value={wallet}
               onChange={(e) => setWallet(e.target.value)}
               className="mt-1 block w-full rounded-md border-0 py-1.5 pl-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-indigo-600 dark:bg-zinc-700 dark:text-white dark:ring-zinc-600"
-              placeholder="WALLET_XXXX"
+              placeholder="ALGORAND_WALLET_ADDRESS"
             />
           </div>
 

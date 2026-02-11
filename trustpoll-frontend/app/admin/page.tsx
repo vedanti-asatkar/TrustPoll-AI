@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 const ADMIN_EMAIL = "kalyani.bhintade@vit.edu";
@@ -24,11 +24,56 @@ interface Candidate {
   votes: number;
 }
 
+interface FairnessReport {
+  election_id: string;
+  fairness_score: number;
+  metrics: {
+    total_attempts: number;
+    total_votes_cast: number;
+    tampering_attempts_detected: number;
+    duplicate_attempts_blocked: number;
+    abnormal_timing_clusters: number;
+    suspicious_ip_clusters: number;
+    admin_high_risk_events?: number;
+    admin_critical_events?: number;
+    governance_missing_anchor_records?: number;
+  };
+  penalties: {
+    tampering_penalty: number;
+    duplicate_penalty: number;
+    timing_penalty: number;
+    ip_penalty: number;
+  };
+  formula: {
+    equation: string;
+  };
+  governance?: {
+    governance_integrity_status?: "HEALTHY" | "COMPROMISED";
+    tampering_detection_result?: string;
+  };
+  governance_risk_flag?: boolean;
+  fairness_hash: string;
+  algorand_tx_id: string | null;
+  anchored: boolean;
+  computed_at: string | null;
+}
+
+interface GovernanceAudit {
+  total_admin_high_risk_events: number;
+  total_admin_critical_events: number;
+  anchored_high_risk_events: number;
+  blockchain_admin_anchor_count: number;
+  blockchain_verification_status: string;
+  tampering_detection_result: string;
+  missing_hash_count: number;
+  governance_integrity_status: "HEALTHY" | "COMPROMISED";
+}
+
 export default function AdminPage() {
   const [email, setEmail] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authError, setAuthError] = useState("");
-  
+
   const [stats, setStats] = useState<Stats | null>(null);
   const [flags, setFlags] = useState<AiFlag[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -41,6 +86,10 @@ export default function AdminPage() {
   const [resultsPublished, setResultsPublished] = useState(false);
   const [resultsLoading, setResultsLoading] = useState(false);
   const [resultsMessage, setResultsMessage] = useState<string | null>(null);
+  const [fairness, setFairness] = useState<FairnessReport | null>(null);
+  const [fairnessLoading, setFairnessLoading] = useState(false);
+  const [fairnessMessage, setFairnessMessage] = useState<string | null>(null);
+  const [governanceAudit, setGovernanceAudit] = useState<GovernanceAudit | null>(null);
 
   const handleLogin = () => {
     if (email.trim() === ADMIN_EMAIL) {
@@ -55,25 +104,21 @@ export default function AdminPage() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const [statsRes, flagsRes, candidatesRes] = await Promise.all([
+      const [statsRes, flagsRes, candidatesRes, fairnessRes, governanceRes] = await Promise.all([
         fetch(`${API_BASE}/admin/stats`),
         fetch(`${API_BASE}/admin/ai-flags`),
-        fetch(`${API_BASE}/admin/candidates`)
+        fetch(`${API_BASE}/admin/candidates?admin_id=${encodeURIComponent(ADMIN_EMAIL)}`),
+        fetch(`${API_BASE}/admin/fairness-index?election_id=demo-1`),
+        fetch(`${API_BASE}/admin/governance-audit?election_id=demo-1`),
       ]);
 
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
-      }
-      
-      if (flagsRes.ok) {
-        const flagsData = await flagsRes.json();
-        setFlags(flagsData);
-      }
-
-      if (candidatesRes.ok) {
-        const candidatesData = await candidatesRes.json();
-        setCandidates(candidatesData);
+      if (statsRes.ok) setStats(await statsRes.json());
+      if (flagsRes.ok) setFlags(await flagsRes.json());
+      if (candidatesRes.ok) setCandidates(await candidatesRes.json());
+      if (fairnessRes.ok) setFairness(await fairnessRes.json());
+      if (governanceRes.ok) {
+        const governanceData = await governanceRes.json();
+        setGovernanceAudit(governanceData.audit || null);
       }
 
       const resultsRes = await fetch(`${API_BASE}/admin/results-status`);
@@ -88,21 +133,47 @@ export default function AdminPage() {
     }
   };
 
-  const handleAcknowledge = async (wallet: string) => {
-    setActionLoading(wallet);
+  const handleGenerateFairnessIndex = async () => {
+    setFairnessLoading(true);
+    setFairnessMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/fairness-index`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ election_id: "demo-1", anchor: true, admin_id: ADMIN_EMAIL }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setFairness(data);
+        setFairnessMessage(data.anchored ? "Fairness index generated and anchored on Algorand." : "Fairness index generated, but anchoring failed.");
+        const governanceRes = await fetch(`${API_BASE}/admin/governance-audit?election_id=demo-1`);
+        if (governanceRes.ok) {
+          const governanceData = await governanceRes.json();
+          setGovernanceAudit(governanceData.audit || null);
+        }
+      } else {
+        setFairnessMessage(data.error || "Failed to generate fairness index.");
+      }
+    } catch (error) {
+      console.error("Failed to generate fairness index", error);
+      setFairnessMessage("Network error while generating fairness index.");
+    } finally {
+      setFairnessLoading(false);
+    }
+  };
+
+  const handleAcknowledge = async (userKey: string) => {
+    setActionLoading(userKey);
     try {
       const res = await fetch(`${API_BASE}/admin/acknowledge-flag`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet }),
+        body: JSON.stringify({ wallet: userKey, admin_id: ADMIN_EMAIL }),
       });
 
       if (res.ok) {
         const flagsRes = await fetch(`${API_BASE}/admin/ai-flags`);
-        if (flagsRes.ok) {
-          const flagsData = await flagsRes.json();
-          setFlags(flagsData);
-        }
+        if (flagsRes.ok) setFlags(await flagsRes.json());
       }
     } catch (error) {
       console.error("Failed to acknowledge flag", error);
@@ -120,19 +191,18 @@ export default function AdminPage() {
       const res = await fetch(`${API_BASE}/admin/add-candidate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmedName }),
+        body: JSON.stringify({ name: trimmedName, admin_id: ADMIN_EMAIL }),
       });
       if (res.ok) {
         setNewCandidate("");
         setCandidateMessage("Candidate added. Voters can refresh to see the update.");
-        // Refresh candidates
-        const cRes = await fetch(`${API_BASE}/admin/candidates`);
+        const cRes = await fetch(`${API_BASE}/admin/candidates?admin_id=${encodeURIComponent(ADMIN_EMAIL)}`);
         if (cRes.ok) setCandidates(await cRes.json());
       } else {
         const data = await res.json();
         setCandidateMessage(data.error || "Failed to add candidate.");
       }
-    } catch (error) {
+    } catch {
       console.error("Failed to add candidate");
       setCandidateMessage("Network error while adding candidate.");
     } finally {
@@ -140,24 +210,24 @@ export default function AdminPage() {
     }
   };
 
-  const handleBlockWallet = async (wallet: string) => {
-    setActionLoading(wallet);
+  const handleBlockWallet = async (userKey: string) => {
+    setActionLoading(userKey);
     setBlockMessage(null);
     try {
       const res = await fetch(`${API_BASE}/admin/block-wallet`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet, minutes: 30 }),
+        body: JSON.stringify({ wallet: userKey, minutes: 30, admin_id: ADMIN_EMAIL }),
       });
       const data = await res.json();
       if (res.ok) {
-        setBlockMessage(`Wallet blocked until ${new Date(data.blocked_until).toLocaleString()}.`);
+        setBlockMessage(`User blocked until ${new Date(data.blocked_until).toLocaleString()}.`);
       } else {
-        setBlockMessage(data.error || "Failed to block wallet.");
+        setBlockMessage(data.error || "Failed to block user.");
       }
     } catch (error) {
-      console.error("Failed to block wallet", error);
-      setBlockMessage("Network error while blocking wallet.");
+      console.error("Failed to block user", error);
+      setBlockMessage("Network error while blocking user.");
     } finally {
       setActionLoading(null);
     }
@@ -172,10 +242,10 @@ export default function AdminPage() {
       const res = await fetch(`${API_BASE}/admin/delete-candidate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ id, admin_id: ADMIN_EMAIL }),
       });
       if (res.ok) {
-        const cRes = await fetch(`${API_BASE}/admin/candidates`);
+        const cRes = await fetch(`${API_BASE}/admin/candidates?admin_id=${encodeURIComponent(ADMIN_EMAIL)}`);
         if (cRes.ok) setCandidates(await cRes.json());
       } else {
         const data = await res.json();
@@ -200,11 +270,16 @@ export default function AdminPage() {
       const res = await fetch(`${API_BASE}/admin/publish-results`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ published: publish }),
+        body: JSON.stringify({ published: publish, admin_id: ADMIN_EMAIL }),
       });
       if (res.ok) {
         setResultsPublished(publish);
         setResultsMessage(publish ? "Results are now public." : "Results are now hidden.");
+        const governanceRes = await fetch(`${API_BASE}/admin/governance-audit?election_id=demo-1`);
+        if (governanceRes.ok) {
+          const governanceData = await governanceRes.json();
+          setGovernanceAudit(governanceData.audit || null);
+        }
       } else {
         const data = await res.json();
         setResultsMessage(data.error || "Failed to update results status.");
@@ -239,16 +314,12 @@ export default function AdminPage() {
               </div>
               <div>
                 <h2 className="font-display text-3xl font-semibold text-slate-100">Admin Console</h2>
-                <p className="mt-2 text-sm text-slate-400">
-                  Enter your authorized email to view governance analytics.
-                </p>
+                <p className="mt-2 text-sm text-slate-400">Enter your authorized email to view governance analytics.</p>
               </div>
             </div>
             <div className="mt-8 space-y-4">
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-slate-300">
-                  Admin Email
-                </label>
+                <label htmlFor="email" className="block text-sm font-medium text-slate-300">Admin Email</label>
                 <input
                   type="email"
                   id="email"
@@ -259,10 +330,7 @@ export default function AdminPage() {
                 />
               </div>
               {authError && <p className="text-sm text-rose-300">{authError}</p>}
-              <button
-                onClick={handleLogin}
-                className="glow-button w-full rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-sky-400"
-              >
+              <button onClick={handleLogin} className="glow-button w-full rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-sky-400">
                 Access Dashboard
               </button>
             </div>
@@ -285,18 +353,13 @@ export default function AdminPage() {
             <h1 className="font-display text-3xl font-semibold text-slate-100">Admin Dashboard</h1>
             <p className="mt-1 text-sm text-slate-400">Governance oversight and live election signals.</p>
           </div>
-          <button
-            onClick={() => setIsAuthenticated(false)}
-            className="rounded-full border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:text-slate-100"
-          >
+          <button onClick={() => setIsAuthenticated(false)} className="rounded-full border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:text-slate-100">
             Logout
           </button>
         </div>
 
         {loading && !stats ? (
-          <div className="glass-panel rounded-3xl px-6 py-12 text-center text-slate-400">
-            Loading dashboard data...
-          </div>
+          <div className="glass-panel rounded-3xl px-6 py-12 text-center text-slate-400">Loading dashboard data...</div>
         ) : (
           <>
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
@@ -325,42 +388,82 @@ export default function AdminPage() {
                     placeholder="Candidate Name"
                     className="input-shell block w-full rounded-xl px-4 py-2 text-sm text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                   />
-                  <button
-                    onClick={handleAddCandidate}
-                    disabled={addingCandidate}
-                    className="glow-button rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-sky-400 disabled:opacity-60"
-                  >
+                  <button onClick={handleAddCandidate} disabled={addingCandidate} className="glow-button rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-sky-400 disabled:opacity-60">
                     {addingCandidate ? "Adding..." : "Add"}
                   </button>
                 </div>
-                {candidateMessage && (
-                  <p className="mt-3 text-sm text-slate-400">{candidateMessage}</p>
-                )}
+                {candidateMessage && <p className="mt-3 text-sm text-slate-400">{candidateMessage}</p>}
               </div>
 
               <div className="glass-panel rounded-3xl p-6">
                 <h3 className="font-display text-xl font-semibold text-slate-100">Publish Results</h3>
-                <p className="mt-2 text-sm text-slate-400">
-                  Results are hidden by default until an admin publishes them.
-                </p>
+                <p className="mt-2 text-sm text-slate-400">Results are hidden by default until an admin publishes them.</p>
                 <div className="mt-4 flex flex-wrap gap-3">
-                  <button
-                    onClick={() => handlePublishResults(true)}
-                    disabled={resultsLoading || resultsPublished}
-                    className="glow-button rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-emerald-300 disabled:opacity-60"
-                  >
+                  <button onClick={() => handlePublishResults(true)} disabled={resultsLoading || resultsPublished} className="glow-button rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-emerald-300 disabled:opacity-60">
                     {resultsPublished ? "Results Published" : "Publish Results"}
                   </button>
-                  <button
-                    onClick={() => handlePublishResults(false)}
-                    disabled={resultsLoading || !resultsPublished}
-                    className="rounded-xl border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:text-slate-100 disabled:opacity-60"
-                  >
+                  <button onClick={() => handlePublishResults(false)} disabled={resultsLoading || !resultsPublished} className="rounded-xl border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:text-slate-100 disabled:opacity-60">
                     Hide Results
                   </button>
                 </div>
-                {resultsMessage && (
-                  <p className="mt-3 text-sm text-slate-400">{resultsMessage}</p>
+                {resultsMessage && <p className="mt-3 text-sm text-slate-400">{resultsMessage}</p>}
+              </div>
+
+              <div className="glass-panel rounded-3xl p-6 lg:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="font-display text-xl font-semibold text-slate-100">Fairness Index</h3>
+                  <button onClick={handleGenerateFairnessIndex} disabled={fairnessLoading} className="glow-button rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-amber-300 disabled:opacity-60">
+                    {fairnessLoading ? "Computing..." : "Generate & Anchor"}
+                  </button>
+                </div>
+                <p className="mt-2 text-sm text-slate-400">Transparent integrity score based on tampering, duplicate attempts, timing anomalies, and suspicious admin activity.</p>
+
+                {fairness && (
+                  <div className="mt-4 space-y-4">
+                    <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-4">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Election Integrity Score</p>
+                      <p className="mt-2 text-4xl font-semibold text-emerald-300">{fairness.fairness_score.toFixed(1)}%</p>
+                      <p className="mt-2 text-xs text-slate-400">{fairness.formula?.equation}</p>
+                      {fairness.governance_risk_flag && (
+                        <p className="mt-2 text-xs font-semibold text-rose-300">Governance risk flag is active</p>
+                      )}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Tampering attempts detected: <span className="font-semibold text-slate-100">{fairness.metrics.tampering_attempts_detected}</span></div>
+                      <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Duplicate attempts blocked: <span className="font-semibold text-slate-100">{fairness.metrics.duplicate_attempts_blocked}</span></div>
+                      <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Abnormal timing clusters: <span className="font-semibold text-slate-100">{fairness.metrics.abnormal_timing_clusters}</span></div>
+                      <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Suspicious IP clusters: <span className="font-semibold text-slate-100">{fairness.metrics.suspicious_ip_clusters}</span></div>
+                      <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Admin high-risk events: <span className="font-semibold text-slate-100">{fairness.metrics.admin_high_risk_events || 0}</span></div>
+                      <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Admin critical events: <span className="font-semibold text-slate-100">{fairness.metrics.admin_critical_events || 0}</span></div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-xs text-slate-300">
+                      <div>Computation hash: {fairness.fairness_hash}</div>
+                      <div className="mt-1">Anchored tx: {fairness.algorand_tx_id || "Not anchored yet"}</div>
+                      <div className="mt-1">Computed at: {fairness.computed_at ? new Date(fairness.computed_at).toLocaleString() : "Unknown"}</div>
+                    </div>
+                  </div>
+                )}
+
+                {fairnessMessage && <p className="mt-3 text-sm text-slate-400">{fairnessMessage}</p>}
+              </div>
+
+              <div className="glass-panel rounded-3xl p-6 lg:col-span-2">
+                <h3 className="font-display text-xl font-semibold text-slate-100">Governance Integrity Audit</h3>
+                <p className="mt-2 text-sm text-slate-400">Blockchain-backed audit trail for high-risk admin actions.</p>
+                {governanceAudit && governanceAudit.governance_integrity_status === "COMPROMISED" && (
+                  <div className="mt-4 rounded-2xl border border-rose-500/50 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-200">
+                    ⚠ Governance Integrity Compromised
+                  </div>
+                )}
+                {governanceAudit ? (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Total high-risk events: <span className="font-semibold text-slate-100">{governanceAudit.total_admin_high_risk_events}</span></div>
+                    <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Total critical events: <span className="font-semibold text-slate-100">{governanceAudit.total_admin_critical_events}</span></div>
+                    <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Blockchain verification: <span className="font-semibold text-slate-100">{governanceAudit.blockchain_verification_status}</span></div>
+                    <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">Tampering detection: <span className="font-semibold text-slate-100">{governanceAudit.tampering_detection_result}</span></div>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm text-slate-500">Governance audit data will appear after the first monitored admin events.</p>
                 )}
               </div>
 
@@ -371,15 +474,9 @@ export default function AdminPage() {
                     <div key={candidate.id} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3">
                       <div>
                         <p className="text-sm font-semibold text-slate-100">{candidate.name}</p>
-                        <span className="mt-1 inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100">
-                          {candidate.votes} votes
-                        </span>
+                        <span className="mt-1 inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100">{candidate.votes} votes</span>
                       </div>
-                      <button
-                        onClick={() => handleDeleteCandidate(candidate.id, candidate.name)}
-                        disabled={actionLoading === String(candidate.id)}
-                        className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition hover:text-rose-100 disabled:opacity-50"
-                      >
+                      <button onClick={() => handleDeleteCandidate(candidate.id, candidate.name)} disabled={actionLoading === String(candidate.id)} className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition hover:text-rose-100 disabled:opacity-50">
                         {actionLoading === String(candidate.id) ? "Deleting..." : "Delete"}
                       </button>
                     </div>
@@ -396,7 +493,7 @@ export default function AdminPage() {
                 <table className="min-w-full divide-y divide-slate-700/70">
                   <thead className="bg-slate-900/70">
                     <tr>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Wallet</th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">User Key</th>
                       <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Reason</th>
                       <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Severity</th>
                       <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Time</th>
@@ -406,41 +503,23 @@ export default function AdminPage() {
                   <tbody className="divide-y divide-slate-700/70 bg-slate-900/40">
                     {flags.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-6 py-6 text-center text-sm text-slate-400">
-                          No active flags detected.
-                        </td>
+                        <td colSpan={5} className="px-6 py-6 text-center text-sm text-slate-400">No active flags detected.</td>
                       </tr>
                     ) : (
                       flags.map((flag, idx) => (
                         <tr key={`${flag.wallet}-${idx}`}>
-                          <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-100">
-                            {flag.wallet}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-slate-300">
-                            {flag.reason}
-                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-100">{flag.wallet}</td>
+                          <td className="px-6 py-4 text-sm text-slate-300">{flag.reason}</td>
                           <td className="whitespace-nowrap px-6 py-4 text-sm">
-                            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold border ${getSeverityColor(flag.severity)}`}>
-                              {flag.severity}/10
-                            </span>
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold border ${getSeverityColor(flag.severity)}`}>{flag.severity}/10</span>
                           </td>
-                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-300">
-                            {new Date(flag.created_at).toLocaleString()}
-                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-300">{new Date(flag.created_at).toLocaleString()}</td>
                           <td className="whitespace-nowrap px-6 py-4 text-sm">
                             <div className="flex flex-wrap items-center gap-2">
-                              <button
-                                onClick={() => handleAcknowledge(flag.wallet)}
-                                disabled={actionLoading === flag.wallet}
-                                className="rounded-full border border-slate-700/70 bg-slate-900/70 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:text-slate-100 disabled:opacity-50"
-                              >
+                              <button onClick={() => handleAcknowledge(flag.wallet)} disabled={actionLoading === flag.wallet} className="rounded-full border border-slate-700/70 bg-slate-900/70 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:text-slate-100 disabled:opacity-50">
                                 {actionLoading === flag.wallet ? "Processing..." : "Mark as Reviewed"}
                               </button>
-                              <button
-                                onClick={() => handleBlockWallet(flag.wallet)}
-                                disabled={actionLoading === flag.wallet}
-                                className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition hover:text-rose-100 disabled:opacity-50"
-                              >
+                              <button onClick={() => handleBlockWallet(flag.wallet)} disabled={actionLoading === flag.wallet} className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition hover:text-rose-100 disabled:opacity-50">
                                 Block 30m
                               </button>
                             </div>
@@ -451,11 +530,7 @@ export default function AdminPage() {
                   </tbody>
                 </table>
               </div>
-              {blockMessage && (
-                <div className="border-t border-slate-700/70 px-6 py-4 text-sm text-slate-300">
-                  {blockMessage}
-                </div>
-              )}
+              {blockMessage && <div className="border-t border-slate-700/70 px-6 py-4 text-sm text-slate-300">{blockMessage}</div>}
             </div>
           </>
         )}

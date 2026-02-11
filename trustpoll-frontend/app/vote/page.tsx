@@ -12,7 +12,6 @@ interface Candidate {
 
 export default function VotePage() {
   const router = useRouter();
-  const [wallet, setWallet] = useState("");
   const [email, setEmail] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<number | null>(null);
@@ -20,13 +19,11 @@ export default function VotePage() {
   const [status, setStatus] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
-    const storedWallet = localStorage.getItem("user_wallet");
     const storedEmail = localStorage.getItem("user_email");
-    if (!storedWallet || !storedEmail) {
+    if (!storedEmail) {
       router.push("/login");
       return;
     }
-    setWallet(storedWallet);
     setEmail(storedEmail);
 
     const loadCandidates = async () => {
@@ -60,14 +57,12 @@ export default function VotePage() {
 
     setLoading(true);
     setStatus(null);
-
     try {
       const attemptRes = await fetch(`${API_BASE}/vote-attempt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email,
-          wallet,
           candidate_id: selectedCandidate,
           election_id: "demo-1",
           ip_hash: "client",
@@ -87,7 +82,7 @@ export default function VotePage() {
       const voteRes = await fetch(`${API_BASE}/vote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, wallet, candidate_id: selectedCandidate }),
+        body: JSON.stringify({ email, candidate_id: selectedCandidate }),
       });
 
       const voteData = await voteRes.json();
@@ -121,18 +116,14 @@ export default function VotePage() {
               </p>
             </div>
             <div className="neon-border rounded-2xl bg-slate-950/70 px-4 py-3 text-xs font-semibold uppercase tracking-widest text-slate-400">
-              Wallet
-              <div className="mt-2 text-sm font-medium normal-case text-slate-100">
-                {wallet || "Loading..."}
-              </div>
+              Identity
+              <div className="mt-2 text-sm font-medium normal-case text-slate-100">{email || "Loading..."}</div>
             </div>
           </div>
 
           <div className="glass-panel rounded-3xl p-8">
             <div className="flex items-center justify-between">
-              <h2 className="font-display text-2xl font-semibold text-slate-100">
-                Select a Candidate
-              </h2>
+              <h2 className="font-display text-2xl font-semibold text-slate-100">Select a Candidate</h2>
               <span className="rounded-full bg-slate-800/80 px-3 py-1 text-xs font-semibold text-slate-300">
                 {candidates.length} options
               </span>

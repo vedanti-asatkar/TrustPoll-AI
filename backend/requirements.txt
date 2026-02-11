@@ -3,3 +3,4 @@ supabase
 flask
 flask-cors
 py-algorand-sdk
+psycopg2-binary

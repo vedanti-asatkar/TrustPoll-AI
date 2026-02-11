@@ -6,11 +6,37 @@ import Link from "next/link";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 type PublicResult = { id: number; name: string; votes: number };
+type GovernanceAudit = {
+  total_admin_high_risk_events: number;
+  total_admin_critical_events: number;
+  blockchain_verification_status: string;
+  tampering_detection_result: string;
+  governance_integrity_status: "HEALTHY" | "COMPROMISED";
+};
+type PublicFairnessIndex = {
+  fairness_score: number;
+  formula?: { equation?: string };
+  metrics?: {
+    tampering_attempts_detected?: number;
+    duplicate_attempts_blocked?: number;
+    abnormal_timing_clusters?: number;
+    suspicious_ip_clusters?: number;
+    admin_high_risk_events?: number;
+    admin_critical_events?: number;
+  };
+  governance_risk_flag?: boolean;
+  fairness_hash?: string;
+  algorand_tx_id?: string | null;
+  computed_at?: string | null;
+};
 
 export default function HomePage() {
   const [results, setResults] = useState<PublicResult[]>([]);
   const [published, setPublished] = useState(false);
   const [resultsError, setResultsError] = useState("");
+  const [governanceAudit, setGovernanceAudit] = useState<GovernanceAudit | null>(null);
+  const [governanceWarning, setGovernanceWarning] = useState("");
+  const [fairnessIndex, setFairnessIndex] = useState<PublicFairnessIndex | null>(null);
 
   useEffect(() => {
     const loadResults = async () => {
@@ -20,6 +46,9 @@ export default function HomePage() {
         if (res.ok) {
           setPublished(Boolean(data.published));
           setResults(Array.isArray(data.results) ? data.results : []);
+          setGovernanceAudit(data.governance_integrity_audit || null);
+          setGovernanceWarning(data.governance_warning || "");
+          setFairnessIndex(data.fairness_index || null);
         } else {
           setResultsError(data.error || "Failed to load results.");
         }
@@ -132,22 +161,70 @@ export default function HomePage() {
               </div>
             )}
             {published && !resultsError && (
-              <div className="grid gap-4 md:grid-cols-2">
-                {results.length === 0 ? (
-                  <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-6 text-center text-sm text-slate-400">
-                    No votes recorded yet.
+              <div className="space-y-6">
+                {governanceWarning && (
+                  <div className="rounded-2xl border border-rose-500/50 bg-rose-500/10 px-4 py-4 text-sm font-semibold text-rose-200">
+                    ⚠ Governance Integrity Compromised
                   </div>
-                ) : (
-                  results.map((entry) => (
-                    <div key={entry.id} className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-4">
-                      <p className="text-sm font-semibold text-slate-100">{entry.name}</p>
-                      <p className="mt-2 text-xs uppercase tracking-[0.2em] text-slate-400">
-                        Votes
-                      </p>
-                      <p className="mt-1 text-2xl font-semibold text-emerald-200">{entry.votes}</p>
-                    </div>
-                  ))
                 )}
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  {results.length === 0 ? (
+                    <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-6 text-center text-sm text-slate-400">
+                      No votes recorded yet.
+                    </div>
+                  ) : (
+                    results.map((entry) => (
+                      <div key={entry.id} className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-4">
+                        <p className="text-sm font-semibold text-slate-100">{entry.name}</p>
+                        <p className="mt-2 text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Votes
+                        </p>
+                        <p className="mt-1 text-2xl font-semibold text-emerald-200">{entry.votes}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-4">
+                  <h4 className="text-sm font-semibold text-slate-100">Governance Integrity Audit</h4>
+                  {!governanceAudit ? (
+                    <p className="mt-2 text-sm text-slate-400">Governance audit data not available yet.</p>
+                  ) : (
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <p className="text-sm text-slate-300">Total admin high-risk events: <span className="font-semibold text-slate-100">{governanceAudit.total_admin_high_risk_events}</span></p>
+                      <p className="text-sm text-slate-300">Total critical events: <span className="font-semibold text-slate-100">{governanceAudit.total_admin_critical_events}</span></p>
+                      <p className="text-sm text-slate-300">Blockchain verification: <span className="font-semibold text-slate-100">{governanceAudit.blockchain_verification_status}</span></p>
+                      <p className="text-sm text-slate-300">Tampering detection: <span className="font-semibold text-slate-100">{governanceAudit.tampering_detection_result}</span></p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-4">
+                  <h4 className="text-sm font-semibold text-slate-100">Election Fairness Index</h4>
+                  {!fairnessIndex ? (
+                    <p className="mt-2 text-sm text-slate-400">Fairness index has not been generated yet.</p>
+                  ) : (
+                    <div className="mt-3 space-y-3">
+                      <p className="text-3xl font-semibold text-emerald-200">{fairnessIndex.fairness_score.toFixed(1)}%</p>
+                      <p className="text-xs text-slate-400">{fairnessIndex.formula?.equation || "Transparent scoring formula applied."}</p>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <p className="text-sm text-slate-300">Tampering attempts: <span className="font-semibold text-slate-100">{fairnessIndex.metrics?.tampering_attempts_detected ?? 0}</span></p>
+                        <p className="text-sm text-slate-300">Duplicate blocked: <span className="font-semibold text-slate-100">{fairnessIndex.metrics?.duplicate_attempts_blocked ?? 0}</span></p>
+                        <p className="text-sm text-slate-300">Timing clusters: <span className="font-semibold text-slate-100">{fairnessIndex.metrics?.abnormal_timing_clusters ?? 0}</span></p>
+                        <p className="text-sm text-slate-300">Suspicious IP clusters: <span className="font-semibold text-slate-100">{fairnessIndex.metrics?.suspicious_ip_clusters ?? 0}</span></p>
+                        <p className="text-sm text-slate-300">Admin high-risk events: <span className="font-semibold text-slate-100">{fairnessIndex.metrics?.admin_high_risk_events ?? 0}</span></p>
+                        <p className="text-sm text-slate-300">Admin critical events: <span className="font-semibold text-slate-100">{fairnessIndex.metrics?.admin_critical_events ?? 0}</span></p>
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        Hash: {fairnessIndex.fairness_hash || "N/A"} | Tx: {fairnessIndex.algorand_tx_id || "Not anchored"} | Computed: {fairnessIndex.computed_at ? new Date(fairnessIndex.computed_at).toLocaleString() : "Unknown"}
+                      </p>
+                      {fairnessIndex.governance_risk_flag && (
+                        <p className="text-xs font-semibold text-rose-300">Governance risk impacted this score.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
