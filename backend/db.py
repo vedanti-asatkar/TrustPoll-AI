@@ -2,16 +2,12 @@ import os
 from psycopg2 import pool as pg_pool
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable is not set")
 
-MIN_CONN = int(os.getenv("DB_POOL_MIN", "1"))
-MAX_CONN = int(os.getenv("DB_POOL_MAX", "10"))
-
 _POOL = pg_pool.SimpleConnectionPool(
-    MIN_CONN,
-    MAX_CONN,
+    1,
+    10,
     dsn=DATABASE_URL,
     sslmode="require",
     connect_timeout=10

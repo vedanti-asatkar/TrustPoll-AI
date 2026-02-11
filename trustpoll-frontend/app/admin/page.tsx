@@ -38,6 +38,9 @@ export default function AdminPage() {
   const [addingCandidate, setAddingCandidate] = useState(false);
   const [candidateMessage, setCandidateMessage] = useState<string | null>(null);
   const [blockMessage, setBlockMessage] = useState<string | null>(null);
+  const [resultsPublished, setResultsPublished] = useState(false);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [resultsMessage, setResultsMessage] = useState<string | null>(null);
 
   const handleLogin = () => {
     if (email.trim() === ADMIN_EMAIL) {
@@ -71,6 +74,12 @@ export default function AdminPage() {
       if (candidatesRes.ok) {
         const candidatesData = await candidatesRes.json();
         setCandidates(candidatesData);
+      }
+
+      const resultsRes = await fetch(`${API_BASE}/admin/results-status`);
+      if (resultsRes.ok) {
+        const resultsData = await resultsRes.json();
+        setResultsPublished(Boolean(resultsData.published));
       }
     } catch (error) {
       console.error("Failed to fetch admin data", error);
@@ -154,6 +163,60 @@ export default function AdminPage() {
     }
   };
 
+  const handleDeleteCandidate = async (id: number, name: string) => {
+    const confirmed = window.confirm(`Delete candidate "${name}"? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setActionLoading(String(id));
+    try {
+      const res = await fetch(`${API_BASE}/admin/delete-candidate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      if (res.ok) {
+        const cRes = await fetch(`${API_BASE}/admin/candidates`);
+        if (cRes.ok) setCandidates(await cRes.json());
+      } else {
+        const data = await res.json();
+        setCandidateMessage(data.error || "Failed to delete candidate.");
+      }
+    } catch (error) {
+      console.error("Failed to delete candidate", error);
+      setCandidateMessage("Network error while deleting candidate.");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handlePublishResults = async (publish: boolean) => {
+    const actionLabel = publish ? "publish" : "unpublish";
+    const confirmed = window.confirm(`Are you sure you want to ${actionLabel} the results?`);
+    if (!confirmed) return;
+
+    setResultsLoading(true);
+    setResultsMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/publish-results`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ published: publish }),
+      });
+      if (res.ok) {
+        setResultsPublished(publish);
+        setResultsMessage(publish ? "Results are now public." : "Results are now hidden.");
+      } else {
+        const data = await res.json();
+        setResultsMessage(data.error || "Failed to update results status.");
+      }
+    } catch (error) {
+      console.error("Failed to update results status", error);
+      setResultsMessage("Network error while updating results.");
+    } finally {
+      setResultsLoading(false);
+    }
+  };
+
   const getSeverityColor = (severity: number) => {
     if (severity >= 7) return "text-red-600 bg-red-50 border-red-200";
     if (severity >= 4) return "text-yellow-600 bg-yellow-50 border-yellow-200";
@@ -164,10 +227,11 @@ export default function AdminPage() {
     return (
       <div className="relative min-h-screen overflow-hidden text-slate-100">
         <div className="pointer-events-none absolute inset-0 grid-overlay" />
-        <div className="pointer-events-none absolute -top-24 right-0 h-80 w-80 rounded-full bg-sky-500/20 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-24 left-10 h-96 w-96 rounded-full bg-cyan-400/20 blur-3xl" />
+        <div className="pointer-events-none absolute inset-0 noise-overlay" />
+        <div className="pointer-events-none absolute -top-24 right-0 h-80 w-80 rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 left-10 h-96 w-96 rounded-full bg-amber-300/10 blur-3xl" />
         <div className="mx-auto flex min-h-screen max-w-3xl items-center px-6 py-16">
-          <div className="glass-panel w-full rounded-3xl p-10">
+          <div className="glass-panel w-full rounded-3xl p-10 shadow-2xl">
             <div className="space-y-6 text-center">
               <div className="inline-flex items-center gap-2 rounded-full border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-300">
                 Secure Admin Access
@@ -190,7 +254,7 @@ export default function AdminPage() {
                   id="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="mt-2 block w-full rounded-xl border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                  className="input-shell mt-2 block w-full rounded-xl px-4 py-2 text-sm text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                   placeholder="admin@vit.edu"
                 />
               </div>
@@ -211,8 +275,10 @@ export default function AdminPage() {
   return (
     <div className="relative min-h-screen overflow-hidden text-slate-100">
       <div className="pointer-events-none absolute inset-0 grid-overlay" />
-      <div className="pointer-events-none absolute -top-24 right-0 h-80 w-80 rounded-full bg-sky-500/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-24 left-10 h-96 w-96 rounded-full bg-cyan-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute inset-0 noise-overlay" />
+      <div className="pointer-events-none absolute -top-24 right-0 h-80 w-80 rounded-full bg-sky-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-24 left-10 h-96 w-96 rounded-full bg-violet-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute right-[18%] top-[12%] h-64 w-64 rounded-full aurora" />
       <div className="mx-auto max-w-6xl space-y-8 px-6 py-12">
         <div className="glass-panel flex flex-wrap items-center justify-between gap-4 rounded-3xl px-6 py-5">
           <div>
@@ -234,15 +300,15 @@ export default function AdminPage() {
         ) : (
           <>
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-              <div className="glass-panel rounded-3xl p-6">
+              <div className="panel rounded-3xl p-6">
                 <dt className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Registered Users</dt>
                 <dd className="mt-3 text-3xl font-semibold text-slate-100">{stats?.users || 0}</dd>
               </div>
-              <div className="glass-panel rounded-3xl p-6">
+              <div className="panel rounded-3xl p-6">
                 <dt className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Vote Attempts</dt>
                 <dd className="mt-3 text-3xl font-semibold text-slate-100">{stats?.vote_attempts || 0}</dd>
               </div>
-              <div className="glass-panel rounded-3xl p-6">
+              <div className="panel rounded-3xl p-6">
                 <dt className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">AI Flags</dt>
                 <dd className="mt-3 text-3xl font-semibold text-rose-300">{stats?.ai_flags || 0}</dd>
               </div>
@@ -257,7 +323,7 @@ export default function AdminPage() {
                     value={newCandidate}
                     onChange={(e) => setNewCandidate(e.target.value)}
                     placeholder="Candidate Name"
-                    className="block w-full rounded-xl border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                    className="input-shell block w-full rounded-xl px-4 py-2 text-sm text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                   />
                   <button
                     onClick={handleAddCandidate}
@@ -273,14 +339,49 @@ export default function AdminPage() {
               </div>
 
               <div className="glass-panel rounded-3xl p-6">
+                <h3 className="font-display text-xl font-semibold text-slate-100">Publish Results</h3>
+                <p className="mt-2 text-sm text-slate-400">
+                  Results are hidden by default until an admin publishes them.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    onClick={() => handlePublishResults(true)}
+                    disabled={resultsLoading || resultsPublished}
+                    className="glow-button rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-emerald-300 disabled:opacity-60"
+                  >
+                    {resultsPublished ? "Results Published" : "Publish Results"}
+                  </button>
+                  <button
+                    onClick={() => handlePublishResults(false)}
+                    disabled={resultsLoading || !resultsPublished}
+                    className="rounded-xl border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:text-slate-100 disabled:opacity-60"
+                  >
+                    Hide Results
+                  </button>
+                </div>
+                {resultsMessage && (
+                  <p className="mt-3 text-sm text-slate-400">{resultsMessage}</p>
+                )}
+              </div>
+
+              <div className="glass-panel rounded-3xl p-6">
                 <h3 className="font-display text-xl font-semibold text-slate-100">Live Vote Counts</h3>
                 <div className="mt-4 space-y-3">
                   {candidates.map((candidate) => (
-                    <div key={candidate.id} className="flex items-center justify-between rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3">
-                      <p className="text-sm font-semibold text-slate-100">{candidate.name}</p>
-                      <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100">
-                        {candidate.votes} votes
-                      </span>
+                    <div key={candidate.id} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-700/70 bg-slate-900/60 px-4 py-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-100">{candidate.name}</p>
+                        <span className="mt-1 inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100">
+                          {candidate.votes} votes
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteCandidate(candidate.id, candidate.name)}
+                        disabled={actionLoading === String(candidate.id)}
+                        className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition hover:text-rose-100 disabled:opacity-50"
+                      >
+                        {actionLoading === String(candidate.id) ? "Deleting..." : "Delete"}
+                      </button>
                     </div>
                   ))}
                 </div>

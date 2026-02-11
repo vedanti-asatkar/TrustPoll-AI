@@ -13,6 +13,7 @@ interface Candidate {
 export default function VotePage() {
   const router = useRouter();
   const [wallet, setWallet] = useState("");
+  const [email, setEmail] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -20,11 +21,13 @@ export default function VotePage() {
 
   useEffect(() => {
     const storedWallet = localStorage.getItem("user_wallet");
-    if (!storedWallet) {
+    const storedEmail = localStorage.getItem("user_email");
+    if (!storedWallet || !storedEmail) {
       router.push("/login");
       return;
     }
     setWallet(storedWallet);
+    setEmail(storedEmail);
 
     const loadCandidates = async () => {
       try {
@@ -59,10 +62,32 @@ export default function VotePage() {
     setStatus(null);
 
     try {
+      const attemptRes = await fetch(`${API_BASE}/vote-attempt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          wallet,
+          candidate_id: selectedCandidate,
+          election_id: "demo-1",
+          ip_hash: "client",
+          device_fingerprint_hash: "client",
+        }),
+      });
+
+      const attemptData = await attemptRes.json();
+      if (!attemptRes.ok || attemptData.status !== "accepted") {
+        setStatus({
+          type: "error",
+          text: attemptData.reason || "Vote rejected by integrity checks.",
+        });
+        return;
+      }
+
       const voteRes = await fetch(`${API_BASE}/vote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet, candidate_id: selectedCandidate }),
+        body: JSON.stringify({ email, wallet, candidate_id: selectedCandidate }),
       });
 
       const voteData = await voteRes.json();
@@ -82,8 +107,10 @@ export default function VotePage() {
   return (
     <div className="relative min-h-screen overflow-hidden text-slate-100">
       <div className="pointer-events-none absolute inset-0 grid-overlay" />
-      <div className="pointer-events-none absolute -top-24 left-0 h-80 w-80 rounded-full bg-sky-500/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-24 right-10 h-96 w-96 rounded-full bg-cyan-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute inset-0 noise-overlay" />
+      <div className="pointer-events-none absolute -top-24 left-0 h-80 w-80 rounded-full bg-cyan-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-24 right-10 h-96 w-96 rounded-full bg-violet-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute right-[20%] top-[15%] h-64 w-64 rounded-full aurora" />
       <div className="mx-auto flex min-h-screen max-w-5xl items-center px-6 py-16">
         <div className="w-full space-y-8">
           <div className="glass-panel flex flex-col gap-4 rounded-3xl p-8 sm:flex-row sm:items-center sm:justify-between">
@@ -93,7 +120,7 @@ export default function VotePage() {
                 Confirm your candidate selection. Once submitted, it cannot be changed.
               </p>
             </div>
-            <div className="neon-border rounded-2xl bg-slate-900/70 px-4 py-3 text-xs font-semibold uppercase tracking-widest text-slate-400">
+            <div className="neon-border rounded-2xl bg-slate-950/70 px-4 py-3 text-xs font-semibold uppercase tracking-widest text-slate-400">
               Wallet
               <div className="mt-2 text-sm font-medium normal-case text-slate-100">
                 {wallet || "Loading..."}
@@ -122,8 +149,8 @@ export default function VotePage() {
                       key={candidate.id}
                       className={`flex items-center gap-3 rounded-2xl border px-4 py-4 text-sm font-medium transition ${
                         isSelected
-                          ? "border-sky-400/80 bg-sky-500/10 text-sky-100 shadow-sm"
-                          : "border-slate-700/70 bg-slate-900/60 text-slate-300 hover:border-sky-400/60"
+                          ? "border-amber-400/80 bg-amber-400/10 text-amber-100 shadow-sm"
+                          : "border-slate-700/70 bg-slate-900/60 text-slate-300 hover:border-sky-400/60 hover:bg-slate-900/80"
                       }`}
                     >
                       <input
@@ -156,7 +183,7 @@ export default function VotePage() {
             <button
               onClick={handleVote}
               disabled={loading || candidates.length === 0}
-              className="glow-button mt-6 inline-flex w-full items-center justify-center rounded-xl bg-sky-500 px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-60"
+              className="glow-button mt-6 inline-flex w-full items-center justify-center rounded-xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? "Submitting..." : "Submit Vote"}
             </button>

@@ -39,6 +39,7 @@ export default function LoginPage() {
 
       if (res.ok) {
         localStorage.setItem("user_wallet", cleanWallet);
+        localStorage.setItem("user_email", cleanEmail);
         router.push("/vote");
       } else {
         const data = await res.json();
@@ -54,17 +55,23 @@ export default function LoginPage() {
   return (
     <div className="relative min-h-screen overflow-hidden text-slate-100">
       <div className="pointer-events-none absolute inset-0 grid-overlay" />
-      <div className="pointer-events-none absolute -top-20 left-10 h-72 w-72 rounded-full bg-sky-500/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-20 right-0 h-96 w-96 rounded-full bg-cyan-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute inset-0 noise-overlay" />
+      <div className="pointer-events-none absolute -top-24 left-10 h-80 w-80 rounded-full bg-cyan-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-20 right-0 h-96 w-96 rounded-full bg-amber-300/10 blur-3xl" />
+      <div className="pointer-events-none absolute right-[15%] top-[30%] h-64 w-64 rounded-full aurora" />
       <div className="mx-auto flex min-h-screen max-w-4xl items-center px-6 py-16">
-        <div className="glass-panel w-full rounded-3xl p-10">
+        <div className="glass-panel w-full rounded-3xl p-10 shadow-2xl">
           <div className="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-center">
             <div className="space-y-4">
+              <div className="inline-flex items-center gap-3 rounded-full border border-slate-700/60 bg-slate-950/70 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-300">
+                Secure Access
+                <span className="h-1.5 w-6 rounded-full bg-gradient-to-r from-cyan-400 via-sky-400 to-amber-300" />
+              </div>
               <h2 className="font-display text-3xl font-semibold text-slate-100">Student Login</h2>
               <p className="text-sm text-slate-400">
                 Verify your wallet and continue to the secure voting space.
               </p>
-              <div className="rounded-2xl border border-slate-700/70 bg-slate-900/70 p-4 text-sm text-slate-300">
+              <div className="panel rounded-2xl p-4 text-sm text-slate-300">
                 Voting is protected by anomaly detection and unique wallet enforcement.
               </div>
             </div>
@@ -76,7 +83,7 @@ export default function LoginPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="mt-2 block w-full rounded-xl border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                  className="input-shell mt-2 block w-full rounded-xl px-4 py-2 text-sm text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                   placeholder="VIT Email"
                 />
               </div>
@@ -87,7 +94,7 @@ export default function LoginPage() {
                   type="text"
                   value={wallet}
                   onChange={(e) => setWallet(e.target.value)}
-                  className="mt-2 block w-full rounded-xl border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                  className="input-shell mt-2 block w-full rounded-xl px-4 py-2 text-sm text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                   placeholder="WALLET_XXXX"
                 />
               </div>

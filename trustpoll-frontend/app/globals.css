@@ -1,12 +1,15 @@
 @import "tailwindcss";
 
 :root {
-  --background: #070a12;
-  --foreground: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
-  --accent-strong: #0ea5e9;
-  --highlight: #22d3ee;
+  --background: #06070b;
+  --foreground: #e7edf6;
+  --muted: #9aa6b2;
+  --accent: #4fd1ff;
+  --accent-strong: #1aa7ff;
+  --highlight: #ffd36a;
+  --ink: #0f172a;
+  --ember: #ff8a3d;
+  --violet: #7c3aed;
 }
 
 @theme inline {
@@ -17,36 +20,122 @@
 }
 
 body {
-  background: radial-gradient(circle at top, rgba(56, 189, 248, 0.18), transparent 45%),
-    radial-gradient(circle at bottom right, rgba(34, 211, 238, 0.15), transparent 40%),
+  background: radial-gradient(circle at 15% 10%, rgba(79, 209, 255, 0.18), transparent 40%),
+    radial-gradient(circle at 90% 20%, rgba(255, 211, 106, 0.16), transparent 35%),
+    radial-gradient(circle at 20% 90%, rgba(124, 58, 237, 0.12), transparent 40%),
     var(--background);
   color: var(--foreground);
   font-family: var(--font-space-grotesk), "Segoe UI", Tahoma, sans-serif;
 }
 
 .glass-panel {
-  background: rgba(15, 23, 42, 0.7);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  box-shadow: 0 20px 60px -35px rgba(56, 189, 248, 0.6);
+  background: rgba(12, 16, 28, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 30px 80px -50px rgba(31, 151, 255, 0.7);
+  backdrop-filter: blur(20px);
+}
+
+.panel {
+  background: rgba(13, 18, 30, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 25px 70px -45px rgba(31, 151, 255, 0.6);
   backdrop-filter: blur(18px);
 }
 
+.panel-strong {
+  background: rgba(10, 13, 22, 0.95);
+  border: 1px solid rgba(79, 209, 255, 0.22);
+  box-shadow: 0 20px 60px -35px rgba(255, 138, 61, 0.4);
+}
+
 .neon-border {
-  border: 1px solid rgba(56, 189, 248, 0.45);
-  box-shadow: 0 0 30px rgba(56, 189, 248, 0.35);
+  border: 1px solid rgba(79, 209, 255, 0.55);
+  box-shadow: 0 0 35px rgba(79, 209, 255, 0.35);
 }
 
 .glow-button {
-  box-shadow: 0 10px 30px -15px rgba(56, 189, 248, 0.9);
+  box-shadow: 0 12px 35px -18px rgba(79, 209, 255, 0.95);
 }
 
 .grid-overlay {
   background-image: linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
     linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
-  background-size: 60px 60px;
-  mask-image: radial-gradient(circle at top, rgba(0, 0, 0, 0.8), transparent 70%);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(circle at top, rgba(0, 0, 0, 0.85), transparent 70%);
+}
+
+.noise-overlay {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/></filter><rect width='160' height='160' filter='url(%23n)' opacity='0.25'/></svg>");
+  mix-blend-mode: soft-light;
+  opacity: 0.35;
+}
+
+.aurora {
+  background: conic-gradient(from 120deg at 30% 30%, rgba(79, 209, 255, 0.2), transparent 25%, rgba(255, 138, 61, 0.2), transparent 45%, rgba(124, 58, 237, 0.22));
+  filter: blur(10px);
+  opacity: 0.75;
+  animation: drift 18s ease-in-out infinite;
+}
+
+.halo {
+  box-shadow: 0 0 50px rgba(79, 209, 255, 0.35);
+}
+
+.chip {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.input-shell {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(10, 14, 24, 0.7);
+}
+
+.badge-ember {
+  background: rgba(255, 138, 61, 0.18);
+  color: #ffd4b8;
+  border: 1px solid rgba(255, 138, 61, 0.35);
 }
 
 .font-display {
   font-family: var(--font-fraunces), Georgia, serif;
+}
+
+.fade-in-up {
+  animation: fadeUp 0.7s ease forwards;
+}
+
+.fade-in-up.delay-1 {
+  animation-delay: 0.1s;
+}
+
+.fade-in-up.delay-2 {
+  animation-delay: 0.2s;
+}
+
+.fade-in-up.delay-3 {
+  animation-delay: 0.3s;
+}
+
+@keyframes drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(20px, -20px, 0) scale(1.05);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

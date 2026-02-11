@@ -4,7 +4,9 @@ load_dotenv()
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from db import get_connection, release_connection
-from ai import check_anomaly
+from ai import analyze_vote
+from algorand_anchor import anchor_decision_hash, fetch_tx_note, count_wallet_anchors
+from consensus import run_consensus
 import psycopg2
 from datetime import datetime, timedelta
 from email_service import send_verification_otp
@@ -41,6 +43,7 @@ def ensure_schema():
                 id SERIAL PRIMARY KEY,
                 candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
                 wallet TEXT NOT NULL,
+                email TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
             );
             CREATE TABLE IF NOT EXISTS vote_attempts (
@@ -57,10 +60,53 @@ def ensure_schema():
                 severity INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT NOW()
             );
+            CREATE TABLE IF NOT EXISTS ai_decisions (
+                id SERIAL PRIMARY KEY,
+                email TEXT,
+                wallet TEXT NOT NULL,
+                has_voted BOOLEAN DEFAULT FALSE,
+                decision TEXT NOT NULL,
+                risk_score NUMERIC(3,2) NOT NULL,
+                rules_triggered TEXT[] NOT NULL,
+                model_version TEXT NOT NULL,
+                payload_json JSONB NOT NULL,
+                payload_hash TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS consensus_votes (
+                id SERIAL PRIMARY KEY,
+                wallet TEXT NOT NULL,
+                validator TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                decision_hash TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS consensus_results (
+                id SERIAL PRIMARY KEY,
+                wallet TEXT NOT NULL,
+                decision_hash TEXT NOT NULL,
+                final_verdict TEXT NOT NULL,
+                votes_json JSONB NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS results_publication (
+                id INTEGER PRIMARY KEY,
+                published BOOLEAN DEFAULT FALSE,
+                published_at TIMESTAMP
+            );
         """)
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_until TIMESTAMP;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_voted BOOLEAN DEFAULT FALSE;")
+        cur.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS email TEXT;")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS votes_wallet_unique ON votes(wallet);")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS votes_email_unique ON votes(email) WHERE email IS NOT NULL;")
+        cur.execute("ALTER TABLE ai_decisions ADD COLUMN IF NOT EXISTS email TEXT;")
+        cur.execute("ALTER TABLE ai_decisions ADD COLUMN IF NOT EXISTS has_voted BOOLEAN DEFAULT FALSE;")
+        cur.execute("ALTER TABLE ai_decisions ADD COLUMN IF NOT EXISTS algorand_tx_id TEXT;")
+        # Normalize election_id to TEXT to allow human-friendly IDs in demos/tests.
+        cur.execute("ALTER TABLE vote_attempts ALTER COLUMN election_id TYPE TEXT USING election_id::text;")
+        cur.execute("INSERT INTO results_publication (id, published) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING;")
         conn.commit()
     finally:
         cur.close()
@@ -214,54 +260,36 @@ def get_candidates():
 @app.route("/vote", methods=["POST"])
 def vote():
     data = request.json or {}
+    email = data.get("email")
     wallet = data.get("wallet")
     candidate_id = data.get("candidate_id")
 
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT blocked_until, email_verified FROM users WHERE wallet = %s", (wallet,))
+        cur.execute("SELECT blocked_until, email_verified, has_voted FROM users WHERE email = %s", (email,))
         user = cur.fetchone()
         if not user:
             return jsonify({"error": "User not found"}), 404
-        blocked_until, email_verified = user
+        blocked_until, email_verified, has_voted = user
         if blocked_until and blocked_until > datetime.utcnow():
             return jsonify({"error": "Account temporarily blocked. Please try again later."}), 403
         if not email_verified:
             return jsonify({"error": "Please verify your email before voting."}), 403
-
-        cur.execute("""
-            SELECT COUNT(*) 
-            FROM vote_attempts
-            WHERE wallet = %s
-            AND timestamp > NOW() - INTERVAL '5 minutes'
-        """, (wallet,))
-        recent_attempts = cur.fetchone()[0]
-
-        suspicious = recent_attempts >= 3
-        reason = "Rapid voting attempts detected" if suspicious else None
-
-        cur.execute("""
-            INSERT INTO vote_attempts (wallet, election_id, result)
-            VALUES (%s, %s, %s)
-        """, (wallet, None, "flagged" if suspicious else "ok"))
-
-        if suspicious:
-            cur.execute("""
-                INSERT INTO ai_flags (wallet, reason, severity)
-                VALUES (%s, %s, %s)
-            """, (wallet, reason, 7))
-            conn.commit()
-            return jsonify({"error": reason}), 403
-        # Commit attempt logging before vote write so attempts are recorded
-        conn.commit()
+        if has_voted:
+            return jsonify({"error": "You have already voted"}), 400
 
         cur.execute(
-            "INSERT INTO votes (candidate_id, wallet) VALUES (%s, %s) ON CONFLICT (wallet) DO NOTHING",
-            (candidate_id, wallet)
+            """
+            INSERT INTO votes (candidate_id, wallet, email)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (email) DO NOTHING
+            """,
+            (candidate_id, wallet, email),
         )
         if cur.rowcount == 0:
             return jsonify({"error": "You have already voted"}), 400
+        cur.execute("UPDATE users SET has_voted = TRUE WHERE email = %s", (email,))
         conn.commit()
         return jsonify({"message": "Vote cast successfully"})
     finally:
@@ -272,10 +300,148 @@ def vote():
 @app.route("/vote-attempt", methods=["POST"])
 def vote_attempt():
     data = request.json or {}
-    wallet = data["wallet"]
+    email = data.get("email")
+    wallet = data.get("wallet")
     election_id = data.get("election_id")
 
-    suspicious, reason = check_anomaly(wallet)
+    if not email:
+        return jsonify({
+            "status": "rejected",
+            "reason": "Email is required",
+            "integrity_status": "OK",
+        }), 400
+
+    # Integrity check: compare DB vote record vs on-chain anchors
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT email_verified, has_voted, wallet FROM users WHERE email = %s", (email,))
+        user = cur.fetchone()
+    finally:
+        cur.close()
+        release_connection(conn)
+
+    if not user:
+        return jsonify({
+            "status": "rejected",
+            "reason": "User not found",
+            "integrity_status": "OK",
+        }), 404
+
+    email_verified, has_voted, user_wallet = user
+    if not email_verified:
+        return jsonify({
+            "status": "rejected",
+            "reason": "Email not verified",
+            "integrity_status": "OK",
+        }), 403
+    if has_voted:
+        return jsonify({
+            "status": "rejected",
+            "reason": "Email already voted",
+            "integrity_status": "OK",
+        }), 409
+
+    chain_anchor_count = count_wallet_anchors(user_wallet)
+    blockchain_anchor_exists = chain_anchor_count > 0
+
+    if not has_voted and blockchain_anchor_exists:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO ai_flags (wallet, reason, severity) VALUES (%s, %s, %s)",
+                (user_wallet, "CRITICAL_TAMPERING", 10),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+            release_connection(conn)
+        return jsonify({
+            "status": "rejected",
+            "reason": "On-chain history exists but DB record is missing",
+            "integrity_status": "CRITICAL_TAMPERING",
+        }), 409
+
+    if has_voted and not blockchain_anchor_exists:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO ai_flags (wallet, reason, severity) VALUES (%s, %s, %s)",
+                (user_wallet, "INCONSISTENT_STATE", 7),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+            release_connection(conn)
+        return jsonify({
+            "status": "rejected",
+            "reason": "DB record exists but no on-chain anchor found",
+            "integrity_status": "INCONSISTENT_STATE",
+        }), 409
+
+    if chain_anchor_count > 1:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO ai_flags (wallet, reason, severity) VALUES (%s, %s, %s)",
+                (user_wallet, "DOUBLE_VOTE_ON_CHAIN", 9),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+            release_connection(conn)
+        return jsonify({
+            "status": "rejected",
+            "reason": "Multiple on-chain anchors detected for wallet",
+            "integrity_status": "DOUBLE_VOTE_ON_CHAIN",
+        }), 409
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM vote_attempts
+            WHERE wallet = %s
+            AND timestamp > NOW() - INTERVAL '5 minutes'
+        """, (wallet,))
+        vote_attempt_count = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT EXTRACT(EPOCH FROM (NOW() - MAX(timestamp)))
+            FROM vote_attempts
+            WHERE wallet = %s
+        """, (wallet,))
+        time_between = cur.fetchone()[0]
+    finally:
+        cur.close()
+        release_connection(conn)
+
+    metadata = {
+        "email": email,
+        "has_voted": has_voted,
+        "wallet": user_wallet,
+        "vote_attempt_count": int(vote_attempt_count),
+        "time_between_attempts_sec": int(time_between or 999999),
+        "ip_hash": data.get("ip_hash", "unknown"),
+        "device_fingerprint_hash": data.get("device_fingerprint_hash", "unknown"),
+        "election_id": election_id,
+        "candidate_id": data.get("candidate_id"),
+        "timestamp": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    }
+
+    decision_payload, payload_hash = analyze_vote(metadata)
+    consensus_verdict, validators, validators_json = run_consensus(
+        decision_payload["decision"], metadata
+    )
+    algorand_tx_id = None
+    try:
+        algorand_tx_id = anchor_decision_hash(payload_hash, sender_wallet=wallet)
+    except Exception:
+        algorand_tx_id = None
 
     conn = get_connection()
     cur = conn.cursor()
@@ -283,18 +449,45 @@ def vote_attempt():
         cur.execute("""
             INSERT INTO vote_attempts (wallet, election_id, result)
             VALUES (%s, %s, %s)
-        """, (wallet, election_id, "flagged" if suspicious else "ok"))
+        """, (user_wallet, election_id, "flagged" if consensus_verdict != "ALLOW" else "ok"))
 
-        if suspicious:
+        if consensus_verdict != "ALLOW":
             cur.execute("""
                 INSERT INTO ai_flags (wallet, reason, severity)
                 VALUES (%s, %s, %s)
-            """, (wallet, reason, 7))
+            """, (user_wallet, "Automated risk detection", 7))
+
+        for name, data in validators.items():
+            cur.execute(
+                "INSERT INTO consensus_votes (wallet, validator, verdict, decision_hash) VALUES (%s, %s, %s, %s)",
+                (user_wallet, name, data["verdict"], payload_hash),
+            )
+        cur.execute(
+            "INSERT INTO consensus_results (wallet, decision_hash, final_verdict, votes_json) VALUES (%s, %s, %s, %s)",
+            (user_wallet, payload_hash, consensus_verdict, validators_json),
+        )
+
+        if algorand_tx_id:
+            cur.execute(
+                "UPDATE ai_decisions SET algorand_tx_id = %s WHERE payload_hash = %s",
+                (algorand_tx_id, payload_hash),
+            )
+
+        if consensus_verdict == "ALLOW":
+            cur.execute("UPDATE users SET has_voted = TRUE WHERE email = %s", (email,))
 
         conn.commit()
         return jsonify({
-            "allowed": not suspicious,
-            "reason": reason
+            "status": "accepted" if consensus_verdict == "ALLOW" else "rejected",
+            "reason": "Risk evaluation completed",
+            "integrity_status": "OK",
+            "decision": decision_payload,
+            "decision_hash": payload_hash,
+            "algorand_tx_id": algorand_tx_id,
+            "consensus": {
+                "final_verdict": consensus_verdict,
+                "validators": validators,
+            }
         })
     finally:
         cur.close()
@@ -346,6 +539,89 @@ def admin_stats():
         cur.execute("SELECT COUNT(*) FROM ai_flags")
         ai_flags = cur.fetchone()[0]
         return jsonify({"users": users, "vote_attempts": vote_attempts, "ai_flags": ai_flags})
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+@app.route("/admin/delete-candidate", methods=["POST"])
+def delete_candidate():
+    data = request.json or {}
+    candidate_id = data.get("id")
+    if not candidate_id:
+        return jsonify({"error": "Candidate id is required"}), 400
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM candidates WHERE id = %s", (candidate_id,))
+        if cur.rowcount == 0:
+            return jsonify({"error": "Candidate not found"}), 404
+        conn.commit()
+        return jsonify({"message": "Candidate deleted"})
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+@app.route("/admin/results-status", methods=["GET"])
+def admin_results_status():
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT published, published_at FROM results_publication WHERE id = 1")
+        row = cur.fetchone()
+        published = bool(row[0]) if row else False
+        published_at = row[1].isoformat() if row and row[1] else None
+        return jsonify({"published": published, "published_at": published_at})
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+@app.route("/admin/publish-results", methods=["POST"])
+def admin_publish_results():
+    data = request.json or {}
+    publish = bool(data.get("published"))
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        if publish:
+            cur.execute(
+                "UPDATE results_publication SET published = TRUE, published_at = NOW() WHERE id = 1"
+            )
+        else:
+            cur.execute(
+                "UPDATE results_publication SET published = FALSE, published_at = NULL WHERE id = 1"
+            )
+        conn.commit()
+        return jsonify({"published": publish})
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+@app.route("/results", methods=["GET"])
+def public_results():
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT published FROM results_publication WHERE id = 1")
+        row = cur.fetchone()
+        if not row or not row[0]:
+            return jsonify({"published": False, "results": []})
+
+        query = """
+            SELECT c.id, c.name, COUNT(v.wallet)
+            FROM candidates c
+            LEFT JOIN votes v ON c.id = v.candidate_id
+            GROUP BY c.id
+            ORDER BY COUNT(v.wallet) DESC, c.name
+        """
+        cur.execute(query)
+        rows = cur.fetchall()
+        results = [{"id": r[0], "name": r[1], "votes": r[2]} for r in rows]
+        return jsonify({"published": True, "results": results})
     finally:
         cur.close()
         release_connection(conn)
@@ -415,6 +691,26 @@ def admin_block_wallet():
 @app.route("/health")
 def health():
     return "Backend running"
+
+
+@app.route("/verify-decision", methods=["POST"])
+def verify_decision():
+    data = request.json or {}
+    tx_id = data.get("tx_id")
+    decision_hash = data.get("decision_hash")
+    if not tx_id or not decision_hash:
+        return jsonify({"error": "tx_id and decision_hash are required"}), 400
+
+    onchain_note = fetch_tx_note(tx_id)
+    if not onchain_note:
+        return jsonify({"verified": False, "reason": "No note found on transaction"}), 404
+
+    verified = onchain_note == decision_hash
+    return jsonify({
+        "verified": verified,
+        "onchain_note": onchain_note,
+        "decision_hash": decision_hash,
+    })
 
 
 if __name__ == "__main__":
